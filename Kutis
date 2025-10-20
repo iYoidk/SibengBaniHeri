@@ -1,72 +1,322 @@
--- AutoCombat Complete (LocalScript)
+-- ✅ AutoCombat (Error-Free Version)
 -- Features:
---  - Targets: workspace.MOB (robust detection)
---  - Skills: M1, Kioru Z, OpOp C/V/E (X optional)
---  - Uses client cooldown check if available (ClientSkillHandler.Functions.GetCooldownClient)
---  - GUI: draggable, topmost, ON/OFF, Mode Nearest/All, delay input (no autosave)
---  - Defensive: pcall and many checks to avoid errors
+--  - Auto attack NPC di workspace.MOB
+--  - Skill: M1, Kioru(Z), OpOp(C,V,E,X)
+--  - GUI: draggable, mode Nearest/All, delay input
+--  - Aman dari error padding / GUI
+--  - Menggunakan pcall dan pengecekan cooldown otomatis
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 
--- ----- Config (you can tweak) -----
+-- ===== CONFIG =====
 local SKILL_SEQ = {
-    M1 = "SW_Kioru V2_M1",
-    Z  = "SW_Kioru V2_Z",
-    OpC = "DF_OpOp_C",
-    OpV = "DF_OpOp_V",
-    OpE = "DF_OpOp_E",
-    OpX = "DF_OpOp_X", -- optional
+	M1 = "SW_Kioru V2_M1",
+	Z  = "SW_Kioru V2_Z",
+	OpC = "DF_OpOp_C",
+	OpV = "DF_OpOp_V",
+	OpE = "DF_OpOp_E",
+	OpX = "DF_OpOp_X", -- optional
 }
-local DEFAULT_DELAY = 0.06 -- minimal pause between sequences (used as fallback)
-local FAST_LOOP_WAIT = 0.01 -- main loop small wait
+local DEFAULT_DELAY = 0.06
+local FAST_LOOP_WAIT = 0.01
 
--- ----- Helpers: find SkillAction remote & ClientSkillHandler -----
+-- ===== SAFE FIND =====
 local function safeWaitChild(parent, name, timeout)
-    timeout = timeout or 10
-    local t0 = tick()
-    while tick() - t0 < timeout do
-        local v = parent:FindFirstChild(name)
-        if v then return v end
-        task.wait(0.1)
-    end
-    return nil
+	timeout = timeout or 10
+	local t0 = tick()
+	while tick() - t0 < timeout do
+		local v = parent:FindFirstChild(name)
+		if v then return v end
+		task.wait(0.1)
+	end
+	return nil
 end
 
 local chest = ReplicatedStorage:FindFirstChild("Chest")
-local SkillAction = nil
+local SkillAction
 if chest then
-    local remotes = chest:FindFirstChild("Remotes")
-    if remotes then
-        local functionsFolder = remotes:FindFirstChild("Functions")
-        if functionsFolder then
-            SkillAction = functionsFolder:FindFirstChild("SkillAction")
-        end
-    end
+	local f = chest:FindFirstChild("Remotes")
+	if f then
+		local g = f:FindFirstChild("Functions")
+		if g then
+			SkillAction = g:FindFirstChild("SkillAction")
+		end
+	end
 end
 
 if not SkillAction then
-    -- Try waiting a bit (in case it loads late)
-    local chestW = safeWaitChild(ReplicatedStorage, "Chest", 5)
-    if chestW then
-        local remotesW = chestW:FindFirstChild("Remotes")
-        if remotesW then
-            local functionsFolderW = remotesW:FindFirstChild("Functions")
-            if functionsFolderW then
-                SkillAction = functionsFolderW:FindFirstChild("SkillAction")
-            end
-        end
-    end
+	local chestW = safeWaitChild(ReplicatedStorage, "Chest", 5)
+	if chestW then
+		local remotesW = chestW:FindFirstChild("Remotes")
+		if remotesW then
+			local functionsFolderW = remotesW:FindFirstChild("Functions")
+			if functionsFolderW then
+				SkillAction = functionsFolderW:FindFirstChild("SkillAction")
+			end
+		end
+	end
 end
 
 if not SkillAction then
-    warn("[AutoCombat] SkillAction remote tidak ditemukan di ReplicatedStorage.Chest.Remotes.Functions.SkillAction. Script akan berhenti.")
-    return
+	warn("[AutoCombat] Remote SkillAction tidak ditemukan.")
+	return
 end
 
--- Try to find ClientSkillHandler for cooldown checking
+-- ===== ClientSkillHandler (opsional cooldown) =====
+local ClientSkillHandler
+pcall(function()
+	local ps = player:WaitForChild("PlayerScripts", 3)
+	if ps then
+		local s = ps:FindFirstChild("Services")
+		if s then
+			ClientSkillHandler = s:FindFirstChild("ClientSkillHandler")
+		end
+	end
+end)
+
+-- ===== MOB Folder =====
+local MOB = workspace:FindFirstChild("MOB") or workspace:WaitForChild("MOB", 5)
+if not MOB then
+	warn("[AutoCombat] Folder MOB tidak ditemukan.")
+	return
+end
+
+-- ===== Target Detection =====
+local function gatherTargets()
+	local targets = {}
+	for _, child in ipairs(MOB:GetChildren()) do
+		if child:IsA("Model") and child:FindFirstChild("HumanoidRootPart") then
+			table.insert(targets, child)
+		end
+	end
+	return targets
+end
+
+-- ===== Cooldown Check =====
+local function isSkillOnCooldown(skillName)
+	local suc, g = pcall(function() return _G and _G.Cooldowns end)
+	if suc and type(g) == "table" then
+		local v = g[skillName]
+		if type(v) == "number" then
+			return v > 0
+		elseif v ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+-- ===== Safe Invoke =====
+local function safeInvokeSkill(skillName, payload)
+	if not SkillAction then return end
+	pcall(function()
+		if SkillAction.InvokeServer then
+			SkillAction:InvokeServer(skillName, payload)
+		elseif SkillAction.FireServer then
+			SkillAction:FireServer(skillName, payload)
+		end
+	end)
+end
+
+-- ===== Skill Calls =====
+local function tryUseSkill(skillKey, targetHRP, extra)
+	if not skillKey or isSkillOnCooldown(skillKey) then return end
+	local payload = { MouseHit = targetHRP.CFrame, Type = extra and extra.Type }
+	safeInvokeSkill(skillKey, payload)
+end
+
+local function tryUseM1(targetHRP)
+	if not SKILL_SEQ.M1 or isSkillOnCooldown(SKILL_SEQ.M1) then return end
+	safeInvokeSkill(SKILL_SEQ.M1, { MouseHit = targetHRP.CFrame })
+end
+
+-- ===== GUI =====
+local function createGUI()
+	local CoreGui = game:GetService("CoreGui")
+	local screen = Instance.new("ScreenGui")
+	screen.Name = "AutoCombatGUI"
+	screen.ResetOnSpawn = false
+	screen.ZIndexBehavior = Enum.ZIndexBehavior.Global
+	pcall(function() screen.Parent = CoreGui end)
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0, 360, 0, 160)
+	frame.Position = UDim2.new(0.02, 0, 0.2, 0)
+	frame.BackgroundColor3 = Color3.fromRGB(32,32,32)
+	frame.Active = true
+	frame.Draggable = true
+	frame.Parent = screen
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, 0, 0, 28)
+	title.BackgroundTransparency = 1
+	title.Text = "AutoCombat - M1 + Kioru(Z) + OpOp(C,V,E,X)"
+	title.Font = Enum.Font.SourceSansBold
+	title.TextSize = 14
+	title.TextColor3 = Color3.fromRGB(230,230,230)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = frame
+
+	-- ✅ FIXED Padding
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0,8)
+	padding.Parent = title
+
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0.28, 0, 0, 36)
+	toggleBtn.Position = UDim2.new(0.02, 0, 0.22, 0)
+	toggleBtn.Text = "OFF"
+	toggleBtn.Font = Enum.Font.SourceSansBold
+	toggleBtn.TextSize = 16
+	toggleBtn.BackgroundColor3 = Color3.fromRGB(200,60,60)
+	toggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	toggleBtn.Parent = frame
+
+	local modeBtn = Instance.new("TextButton")
+	modeBtn.Size = UDim2.new(0.32, 0, 0, 36)
+	modeBtn.Position = UDim2.new(0.32, 0, 0.22, 0)
+	modeBtn.Text = "Mode: Nearest"
+	modeBtn.Font = Enum.Font.SourceSans
+	modeBtn.TextSize = 14
+	modeBtn.BackgroundColor3 = Color3.fromRGB(60,120,220)
+	modeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	modeBtn.Parent = frame
+
+	local delayLabel = Instance.new("TextLabel")
+	delayLabel.Size = UDim2.new(0.38, -8, 0, 18)
+	delayLabel.Position = UDim2.new(0.02, 0, 0.52, 0)
+	delayLabel.Text = "Delay seq (s):"
+	delayLabel.BackgroundTransparency = 1
+	delayLabel.TextColor3 = Color3.fromRGB(200,200,200)
+	delayLabel.Font = Enum.Font.SourceSans
+	delayLabel.TextSize = 13
+	delayLabel.TextXAlignment = Enum.TextXAlignment.Left
+	delayLabel.Parent = frame
+
+	local delayBox = Instance.new("TextBox")
+	delayBox.Size = UDim2.new(0.34, 0, 0, 28)
+	delayBox.Position = UDim2.new(0.4, 0, 0.48, 0)
+	delayBox.Text = tostring(DEFAULT_DELAY)
+	delayBox.Font = Enum.Font.SourceSans
+	delayBox.TextSize = 14
+	delayBox.BackgroundColor3 = Color3.fromRGB(48,48,48)
+	delayBox.TextColor3 = Color3.fromRGB(240,240,240)
+	delayBox.ClearTextOnFocus = false
+	delayBox.Parent = frame
+
+	local info = Instance.new("TextLabel")
+	info.Size = UDim2.new(0.6, -12, 0, 28)
+	info.Position = UDim2.new(0.02, 0, 0.75, 0)
+	info.BackgroundTransparency = 1
+	info.Text = "Targets: workspace.MOB"
+	info.TextColor3 = Color3.fromRGB(200,200,200)
+	info.Font = Enum.Font.SourceSans
+	info.TextSize = 13
+	info.TextXAlignment = Enum.TextXAlignment.Left
+	info.Parent = frame
+
+	local state = { enabled = false, mode = "Nearest", delay = DEFAULT_DELAY }
+
+	toggleBtn.MouseButton1Click:Connect(function()
+		state.enabled = not state.enabled
+		if state.enabled then
+			toggleBtn.Text = "ON"
+			toggleBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+		else
+			toggleBtn.Text = "OFF"
+			toggleBtn.BackgroundColor3 = Color3.fromRGB(200,60,60)
+		end
+	end)
+
+	modeBtn.MouseButton1Click:Connect(function()
+		state.mode = (state.mode == "Nearest") and "All" or "Nearest"
+		modeBtn.Text = "Mode: " .. state.mode
+	end)
+
+	delayBox.FocusLost:Connect(function(enter)
+		if enter then
+			local v = tonumber(delayBox.Text)
+			if v and v >= 0 then
+				state.delay = v
+			else
+				delayBox.Text = tostring(state.delay)
+			end
+		end
+	end)
+
+	return screen, state
+end
+
+local gui, guiState = createGUI()
+
+-- ===== TARGET SELECTOR =====
+local function pickNearest(list)
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not root then return nil end
+	local best, dist = nil, math.huge
+	for _, t in ipairs(list) do
+		local hrp = t:FindFirstChild("HumanoidRootPart")
+		local hum = t:FindFirstChildOfClass("Humanoid")
+		if hrp and hum and hum.Health > 0 then
+			local d = (hrp.Position - root.Position).Magnitude
+			if d < dist then dist = d; best = t end
+		end
+	end
+	return best
+end
+
+-- ===== MAIN LOOP =====
+task.spawn(function()
+	while true do
+		if guiState.enabled then
+			local targets = gatherTargets()
+			if #targets > 0 then
+				if guiState.mode == "Nearest" then
+					local tgt = pickNearest(targets)
+					if tgt then
+						local hrp = tgt:FindFirstChild("HumanoidRootPart")
+						if hrp then
+							tryUseM1(hrp)
+							tryUseSkill(SKILL_SEQ.Z, hrp, {Type = "Down"})
+							task.wait(0.08)
+							tryUseSkill(SKILL_SEQ.Z, hrp, {Type = "Up"})
+							tryUseSkill(SKILL_SEQ.OpC, hrp, {Type = "Down"})
+							tryUseSkill(SKILL_SEQ.OpV, hrp, {Type = "Up"})
+							tryUseSkill(SKILL_SEQ.OpE, hrp, {Type = "Up"})
+							tryUseSkill(SKILL_SEQ.OpX, hrp, {Type = "Up"})
+							task.wait(guiState.delay)
+						end
+					end
+				else
+					for _, tgt in ipairs(targets) do
+						if not guiState.enabled then break end
+						local hrp = tgt:FindFirstChild("HumanoidRootPart")
+						local hum = tgt:FindFirstChildOfClass("Humanoid")
+						if hrp and hum and hum.Health > 0 then
+							tryUseM1(hrp)
+							tryUseSkill(SKILL_SEQ.Z, hrp, {Type = "Down"})
+							tryUseSkill(SKILL_SEQ.Z, hrp, {Type = "Up"})
+							tryUseSkill(SKILL_SEQ.OpC, hrp, {Type = "Down"})
+							tryUseSkill(SKILL_SEQ.OpV, hrp, {Type = "Up"})
+							tryUseSkill(SKILL_SEQ.OpE, hrp, {Type = "Up"})
+							tryUseSkill(SKILL_SEQ.OpX, hrp, {Type = "Up"})
+							task.wait(0.02)
+						end
+					end
+					task.wait(guiState.delay)
+				end
+			else
+				task.wait(0.5)
+			end
+		end
+		task.wait(FAST_LOOP_WAIT)
+	end
+end)
+
+print("[AutoCombat] ✅ Loaded successfully. GUI ready!")
 local ClientSkillHandler = nil
 pcall(function()
     local ps = player:WaitForChild("PlayerScripts", 3)
