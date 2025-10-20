@@ -1,25 +1,18 @@
--- ⚔️ AutoCombat Lite v3
--- ✅ GUI ringan, bisa minimize
--- ✅ Mode serangan: M1 Only / Skill Only / Both
--- ✅ Delay bebas
--- ✅ Tidak bug blank hitam
--- ✅ Nama GUI: AutoCombatLite
+-- ⚔️ AutoCombat Lite v3 - Immediate Spam Edition
+-- Perubahan: M1 dan Skill dikirim tanpa jeda internal (secepat possible)
+-- Nama GUI: AutoCombatLite
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
-local RunService = game:GetService("RunService")
 
 -- === CONFIG ===
 local SKILL_SEQ = {
 	M1  = "SW_Kioru V2_M1",
 	Z   = "SW_Kioru V2_Z",
-	OpC = "DF_OpOp_C",
-	OpV = "DF_OpOp_V",
-	OpE = "DF_OpOp_E",
 	OpX = "DF_OpOp_X"
 }
-local DEFAULT_DELAY = 0.1
+local DEFAULT_DELAY = 0 -- default 0 (kamu bisa isi delayBox kalau mau)
 
 -- === FIND REMOTES ===
 local SkillAction
@@ -77,30 +70,45 @@ local function nearestTarget()
 	return best
 end
 
--- === ATTACK HANDLERS ===
+-- === ATTACKS (IMMEDIATE) ===
 local function doM1(t)
 	if t and t:FindFirstChild("HumanoidRootPart") then
-		safeInvoke(SKILL_SEQ.M1, {MouseHit = t.HumanoidRootPart.CFrame})
+		-- kirim M1 secepat dipanggil
+		safeInvoke(SKILL_SEQ.M1, { MouseHit = t.HumanoidRootPart.CFrame })
 	end
 end
 
-local function doSkills(t)
+local function doKioruZImmediate(t)
+	-- beberapa implementasi Z memerlukan Down lalu Up; kita kirim keduanya tanpa wait
 	if not t or not t:FindFirstChild("HumanoidRootPart") then return end
 	local hrp = t.HumanoidRootPart
-	safeInvoke(SKILL_SEQ.Z,   {MouseHit = hrp.CFrame, Type = "Down"})
-	task.wait(0.05)
-	safeInvoke(SKILL_SEQ.Z,   {MouseHit = hrp.CFrame, Type = "Up"})
-	task.wait(0.05)
-	safeInvoke(SKILL_SEQ.OpC, {MouseHit = hrp.CFrame, Type = "Down"})
-	task.wait(0.05)
-	safeInvoke(SKILL_SEQ.OpV, {MouseHit = hrp.CFrame, Type = "Up"})
-	task.wait(0.05)
-	safeInvoke(SKILL_SEQ.OpE, {MouseHit = hrp.CFrame, Type = "Up"})
-	task.wait(0.05)
-	safeInvoke(SKILL_SEQ.OpX, {MouseHit = hrp.CFrame, Type = "Up"})
+	-- kirim Down lalu Up secepat mungkin
+	safeInvoke(SKILL_SEQ.Z, { Type = "Down", MouseHit = hrp.CFrame })
+	safeInvoke(SKILL_SEQ.Z, { Type = "Up",   MouseHit = hrp.CFrame })
 end
 
--- === GUI CREATION ===
+local function doOpXImmediate(t)
+	if not t or not t:FindFirstChild("HumanoidRootPart") then return end
+	local hrp = t.HumanoidRootPart
+	safeInvoke(SKILL_SEQ.OpX, { Type = "Down", MouseHit = hrp.CFrame })
+	-- beberapa game butuh hanya Down; tetap kirim Up juga untuk safety (tanpa wait)
+	safeInvoke(SKILL_SEQ.OpX, { Type = "Up",   MouseHit = hrp.CFrame })
+end
+
+local function doSkillsImmediate(t)
+	-- langsung panggil skill yang kamu minta: Kioru Z dan OpX (urut)
+	if not t then return end
+	-- Kioru Z
+	if SKILL_SEQ.Z then
+		doKioruZImmediate(t)
+	end
+	-- OpX
+	if SKILL_SEQ.OpX then
+		doOpXImmediate(t)
+	end
+end
+
+-- === SIMPLE GUI (window style, minimize) ===
 local gui = Instance.new("ScreenGui")
 gui.Name = "AutoCombatLite"
 gui.ResetOnSpawn = false
@@ -108,7 +116,7 @@ gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 gui.Parent = game:GetService("CoreGui")
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 280, 0, 180)
+frame.Size = UDim2.new(0, 300, 0, 180)
 frame.Position = UDim2.new(0.05, 0, 0.25, 0)
 frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 frame.BorderSizePixel = 0
@@ -118,16 +126,16 @@ frame.Draggable = true
 local title = Instance.new("TextLabel", frame)
 title.Size = UDim2.new(1, -20, 0, 28)
 title.Position = UDim2.new(0, 10, 0, 0)
-title.Text = "⚔️ AutoCombat Lite v3"
+title.Text = "⚔️ AutoCombat Lite v3 (Immediate)"
 title.TextColor3 = Color3.new(1,1,1)
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.BackgroundTransparency = 1
 title.Font = Enum.Font.SourceSansBold
-title.TextSize = 16
+title.TextSize = 15
 
 local minimize = Instance.new("TextButton", frame)
-minimize.Size = UDim2.new(0, 24, 0, 24)
-minimize.Position = UDim2.new(1, -30, 0, 2)
+minimize.Size = UDim2.new(0, 26, 0, 26)
+minimize.Position = UDim2.new(1, -32, 0, 2)
 minimize.Text = "-"
 minimize.Font = Enum.Font.SourceSansBold
 minimize.TextSize = 18
@@ -135,8 +143,8 @@ minimize.BackgroundColor3 = Color3.fromRGB(70,70,70)
 minimize.TextColor3 = Color3.new(1,1,1)
 
 local toggle = Instance.new("TextButton", frame)
-toggle.Size = UDim2.new(0.4, 0, 0, 36)
-toggle.Position = UDim2.new(0.05, 0, 0.25, 0)
+toggle.Size = UDim2.new(0.45, 0, 0, 36)
+toggle.Position = UDim2.new(0.03, 0, 0.22, 0)
 toggle.Text = "OFF"
 toggle.Font = Enum.Font.SourceSansBold
 toggle.TextSize = 16
@@ -144,8 +152,8 @@ toggle.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
 toggle.TextColor3 = Color3.new(1,1,1)
 
 local modeBtn = Instance.new("TextButton", frame)
-modeBtn.Size = UDim2.new(0.4, 0, 0, 36)
-modeBtn.Position = UDim2.new(0.55, 0, 0.25, 0)
+modeBtn.Size = UDim2.new(0.45, 0, 0, 36)
+modeBtn.Position = UDim2.new(0.52, 0, 0.22, 0)
 modeBtn.Text = "Mode: Nearest"
 modeBtn.Font = Enum.Font.SourceSans
 modeBtn.TextSize = 14
@@ -154,7 +162,7 @@ modeBtn.TextColor3 = Color3.new(1,1,1)
 
 local atkMode = Instance.new("TextButton", frame)
 atkMode.Size = UDim2.new(0.9, 0, 0, 30)
-atkMode.Position = UDim2.new(0.05, 0, 0.52, 0)
+atkMode.Position = UDim2.new(0.05, 0, 0.5, 0)
 atkMode.Text = "Attack: Both"
 atkMode.Font = Enum.Font.SourceSans
 atkMode.TextSize = 14
@@ -163,8 +171,8 @@ atkMode.TextColor3 = Color3.new(1,1,1)
 
 local delayBox = Instance.new("TextBox", frame)
 delayBox.Size = UDim2.new(0.9, 0, 0, 28)
-delayBox.Position = UDim2.new(0.05, 0, 0.7, 0)
-delayBox.PlaceholderText = "Delay (detik)"
+delayBox.Position = UDim2.new(0.05, 0, 0.68, 0)
+delayBox.PlaceholderText = "Delay (detik) - 0 = no extra delay"
 delayBox.Text = tostring(DEFAULT_DELAY)
 delayBox.Font = Enum.Font.SourceSans
 delayBox.TextSize = 14
@@ -174,7 +182,7 @@ delayBox.ClearTextOnFocus = false
 
 local info = Instance.new("TextLabel", frame)
 info.Size = UDim2.new(0.9, 0, 0, 24)
-info.Position = UDim2.new(0.05, 0, 0.87, 0)
+info.Position = UDim2.new(0.05, 0, 0.86, 0)
 info.BackgroundTransparency = 1
 info.Text = "Status: Idle"
 info.TextColor3 = Color3.fromRGB(200,200,200)
@@ -221,7 +229,7 @@ end)
 delayBox.FocusLost:Connect(function(enter)
 	if enter then
 		local v = tonumber(delayBox.Text)
-		if v then state.delay = v else delayBox.Text = tostring(state.delay) end
+		if v and v >= 0 then state.delay = v else delayBox.Text = tostring(state.delay) end
 	end
 end)
 
@@ -231,18 +239,20 @@ minimize.MouseButton1Click:Connect(function()
 		for _, c in ipairs(frame:GetChildren()) do
 			if c ~= title and c ~= minimize then c.Visible = false end
 		end
-		frame.Size = UDim2.new(0, 180, 0, 28)
+		frame.Size = UDim2.new(0, 200, 0, 28)
 		title.Text = "⚔️ AutoCombat [Hidden]"
 	else
 		for _, c in ipairs(frame:GetChildren()) do c.Visible = true end
-		frame.Size = UDim2.new(0, 280, 0, 180)
-		title.Text = "⚔️ AutoCombat Lite v3"
+		frame.Size = UDim2.new(0, 300, 0, 180)
+		title.Text = "⚔️ AutoCombat Lite v3 (Immediate)"
 	end
 end)
 
--- === MAIN LOOP ===
+-- === MAIN LOOP (IMMEDIATE BEHAVIOR) ===
 task.spawn(function()
-	while task.wait(0.05) do
+	while true do
+		-- tiny yield so we don't freeze host environment; core behavior is "no internal waits"
+		task.wait(0.01)
 		if not state.enabled then
 			info.Text = "Status: Idle"
 			continue
@@ -250,34 +260,46 @@ task.spawn(function()
 		info.Text = "Status: Attacking..."
 
 		local targets = getTargets()
-		if #targets == 0 then task.wait(0.3) continue end
+		if #targets == 0 then
+			task.wait(0.1)
+			continue
+		end
 
 		if state.mode == "Nearest" then
 			local t = nearestTarget()
 			if t then
+				-- Immediate behavior: call M1 and skills back-to-back with NO internal waits
 				if state.attackMode == "M1 Only" then
 					doM1(t)
 				elseif state.attackMode == "Skill Only" then
-					doSkills(t)
-				else
-					doM1(t); task.wait(0.05); doSkills(t)
+					doSkillsImmediate(t)
+				else -- Both
+					doM1(t)
+					-- no wait between M1 and skills (user requested immediate)
+					doSkillsImmediate(t)
 				end
-				task.wait(state.delay)
+				-- user-configurable global delay (can be zero)
+				if state.delay and state.delay > 0 then
+					task.wait(state.delay)
+				end
 			end
-		else
+		else -- All mode: iterate all targets quickly
 			for _, t in ipairs(targets) do
 				if not state.enabled then break end
 				if state.attackMode == "M1 Only" then
 					doM1(t)
 				elseif state.attackMode == "Skill Only" then
-					doSkills(t)
+					doSkillsImmediate(t)
 				else
-					doM1(t); task.wait(0.05); doSkills(t)
+					doM1(t)
+					doSkillsImmediate(t)
 				end
-				task.wait(state.delay)
+				if state.delay and state.delay > 0 then
+					task.wait(state.delay)
+				end
 			end
 		end
 	end
 end)
 
-print("[AutoCombatLite] Loaded successfully.")
+print("[AutoCombatLite] Immediate Edition loaded.")
