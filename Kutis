@@ -1,305 +1,380 @@
--- ⚔️ AutoCombat Lite v3 - Immediate Spam Edition
--- Perubahan: M1 dan Skill dikirim tanpa jeda internal (secepat possible)
--- Nama GUI: AutoCombatLite
+-- AutoCombat Lite v4 - Workspace Range Edition
+-- Features:
+--   - Mode: Nearest / MOB / Workspace
+--   - Attack: M1 Only / Skill Only / Both (Both => M1 then skill)
+--   - Range: custom (default 500) for Workspace mode
+--   - Delay: custom (0 = no extra delay)
+--   - OpX: Up -> wait(0.08) -> Down
+--   - Safe invokes with pcall
+--   - GUI window style + minimize
+-- Name: AutoCombatLite
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 
--- === CONFIG ===
+-- Config (default)
 local SKILL_SEQ = {
-	M1  = "SW_Kioru V2_M1",
-	Z   = "SW_Kioru V2_Z",
-	OpX = "DF_OpOp_X"
+    M1  = "SW_Kioru V2_M1",
+    Z   = "SW_Kioru V2_Z",
+    OpX = "DF_OpOp_X"
 }
-local DEFAULT_DELAY = 0 -- default 0 (kamu bisa isi delayBox kalau mau)
+local DEFAULT_DELAY = 0.05
+local DEFAULT_RANGE = 500
+local OPX_UP_TO_DOWN_WAIT = 0.08
+local M1_TO_SKILL_WAIT = 0.05
 
--- === FIND REMOTES ===
+-- Find SkillAction remote safely
 local SkillAction
 pcall(function()
-	local chest = ReplicatedStorage:WaitForChild("Chest", 5)
-	local remotes = chest and chest:FindFirstChild("Remotes")
-	local funcs = remotes and remotes:FindFirstChild("Functions")
-	SkillAction = funcs and funcs:FindFirstChild("SkillAction")
+    local chest = ReplicatedStorage:FindFirstChild("Chest")
+    if not chest then chest = ReplicatedStorage:WaitForChild("Chest", 5) end
+    if chest then
+        local remotes = chest:FindFirstChild("Remotes")
+        local funcs = remotes and remotes:FindFirstChild("Functions")
+        SkillAction = funcs and funcs:FindFirstChild("SkillAction")
+    end
 end)
 
 if not SkillAction then
-	warn("[AutoCombatLite] SkillAction tidak ditemukan!")
-	return
+    warn("[AutoCombatLite] SkillAction remote tidak ditemukan di ReplicatedStorage.Chest.Remotes.Functions.SkillAction")
+    return
 end
 
-local MOB = workspace:FindFirstChild("MOB") or workspace:WaitForChild("MOB", 5)
-if not MOB then
-	warn("[AutoCombatLite] Folder MOB tidak ditemukan!")
-	return
+-- Ensure MOB folder exists (MOB mode)
+local MOB = Workspace:FindFirstChild("MOB")
+
+-- Utility safe invoke
+local function safeInvoke(skillName, payload)
+    pcall(function()
+        if not SkillAction then return end
+        if SkillAction.InvokeServer then
+            SkillAction:InvokeServer(skillName, payload)
+        elseif SkillAction.FireServer then
+            SkillAction:FireServer(skillName, payload)
+        end
+    end)
 end
 
--- === UTILS ===
-local function safeInvoke(skill, data)
-	pcall(function()
-		if SkillAction and SkillAction.InvokeServer then
-			SkillAction:InvokeServer(skill, data)
-		elseif SkillAction and SkillAction.FireServer then
-			SkillAction:FireServer(skill, data)
-		end
-	end)
+-- Target gathering helpers
+local function isAttackableModel(m)
+    if not m or not m.Parent then return false end
+    local hrp = m:FindFirstChild("HumanoidRootPart")
+    local hum = m:FindFirstChildOfClass("Humanoid")
+    return hrp and hum and hum.Health and hum.Health > 0
 end
 
-local function getTargets()
-	local list = {}
-	for _, m in ipairs(MOB:GetChildren()) do
-		if m:IsA("Model") and m:FindFirstChild("HumanoidRootPart") and m:FindFirstChildOfClass("Humanoid") then
-			table.insert(list, m)
-		end
-	end
-	return list
+local function getTargetsByMode(mode, range)
+    local out = {}
+    if mode == "MOB" then
+        local folder = MOB or Workspace:FindFirstChild("MOB")
+        if folder then
+            for _, c in ipairs(folder:GetChildren()) do
+                if c:IsA("Model") and isAttackableModel(c) then table.insert(out, c) end
+            end
+        end
+        return out
+    elseif mode == "Workspace" then
+        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then return out end
+        range = tonumber(range) or DEFAULT_RANGE
+        for _, inst in ipairs(Workspace:GetDescendants()) do
+            if inst:IsA("Model") then
+                if isAttackableModel(inst) then
+                    local hrp = inst:FindFirstChild("HumanoidRootPart")
+                    if hrp and (hrp.Position - root.Position).Magnitude <= range then
+                        table.insert(out, inst)
+                    end
+                end
+            end
+        end
+        return out
+    else -- Nearest mode fallback: return models under MOB if exist else workspace models
+        -- collect candidates (prefer MOB children)
+        if MOB then
+            for _, c in ipairs(MOB:GetChildren()) do
+                if c:IsA("Model") and isAttackableModel(c) then table.insert(out, c) end
+            end
+            if #out > 0 then return out end
+        end
+        for _, inst in ipairs(Workspace:GetDescendants()) do
+            if inst:IsA("Model") and isAttackableModel(inst) then table.insert(out, inst) end
+        end
+        return out
+    end
 end
 
-local function nearestTarget()
-	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	if not root then return end
-	local best, dist = nil, math.huge
-	for _, m in ipairs(getTargets()) do
-		local hrp = m:FindFirstChild("HumanoidRootPart")
-		local hum = m:FindFirstChildOfClass("Humanoid")
-		if hrp and hum and hum.Health > 0 then
-			local d = (root.Position - hrp.Position).Magnitude
-			if d < dist then dist = d; best = m end
-		end
-	end
-	return best
+local function pickNearest(list)
+    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local best, bd = nil, math.huge
+    for _, t in ipairs(list) do
+        local hrp = t:FindFirstChild("HumanoidRootPart")
+        local hum = t:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 then
+            local d = (hrp.Position - root.Position).Magnitude
+            if d < bd then bd = d; best = t end
+        end
+    end
+    return best
 end
 
--- === ATTACKS (IMMEDIATE) ===
-local function doM1(t)
-	if t and t:FindFirstChild("HumanoidRootPart") then
-		-- kirim M1 secepat dipanggil
-		safeInvoke(SKILL_SEQ.M1, { MouseHit = t.HumanoidRootPart.CFrame })
-	end
+-- Attack implementations
+local function doM1(target)
+    if not target or not isAttackableModel(target) then return end
+    local hrp = target:FindFirstChild("HumanoidRootPart")
+    safeInvoke(SKILL_SEQ.M1, { MouseHit = hrp and hrp.CFrame })
 end
 
-local function doKioruZImmediate(t)
-	-- beberapa implementasi Z memerlukan Down lalu Up; kita kirim keduanya tanpa wait
-	if not t or not t:FindFirstChild("HumanoidRootPart") then return end
-	local hrp = t.HumanoidRootPart
-	-- kirim Down lalu Up secepat mungkin
-	safeInvoke(SKILL_SEQ.Z, { Type = "Down", MouseHit = hrp.CFrame })
-	safeInvoke(SKILL_SEQ.Z, { Type = "Up",   MouseHit = hrp.CFrame })
+local function doKioruZ(target)
+    if not target or not isAttackableModel(target) then return end
+    local hrp = target:FindFirstChild("HumanoidRootPart")
+    -- Some implementations expect Down then Up
+    safeInvoke(SKILL_SEQ.Z, { Type = "Down", MouseHit = hrp.CFrame })
+    -- small gap gives server time to register Down if needed
+    task.wait(0.02)
+    safeInvoke(SKILL_SEQ.Z, { Type = "Up",   MouseHit = hrp.CFrame })
 end
 
-local function doOpXImmediate(t)
-	if not t or not t:FindFirstChild("HumanoidRootPart") then return end
-	local hrp = t.HumanoidRootPart
-	safeInvoke(SKILL_SEQ.OpX, { Type = "Down", MouseHit = hrp.CFrame })
-	-- beberapa game butuh hanya Down; tetap kirim Up juga untuk safety (tanpa wait)
-	safeInvoke(SKILL_SEQ.OpX, { Type = "Up",   MouseHit = hrp.CFrame })
+-- OpX fixed: Up -> wait -> Down
+local function doOpXFixed(target)
+    if not target or not isAttackableModel(target) then return end
+    local hrp = target:FindFirstChild("HumanoidRootPart")
+    safeInvoke(SKILL_SEQ.OpX, { Type = "Up",   MouseHit = hrp.CFrame })
+    task.wait(OPX_UP_TO_DOWN_WAIT)
+    safeInvoke(SKILL_SEQ.OpX, { Type = "Down", MouseHit = hrp.CFrame })
 end
 
-local function doSkillsImmediate(t)
-	-- langsung panggil skill yang kamu minta: Kioru Z dan OpX (urut)
-	if not t then return end
-	-- Kioru Z
-	if SKILL_SEQ.Z then
-		doKioruZImmediate(t)
-	end
-	-- OpX
-	if SKILL_SEQ.OpX then
-		doOpXImmediate(t)
-	end
+local function doSkillsSequence(target)
+    if not target or not isAttackableModel(target) then return end
+    -- Kioru Z then OpX
+    if SKILL_SEQ.Z then
+        doKioruZ(target)
+    end
+    -- Short wait to reduce collisions between skills (but small)
+    task.wait(0.02)
+    if SKILL_SEQ.OpX then
+        doOpXFixed(target)
+    end
 end
 
--- === SIMPLE GUI (window style, minimize) ===
-local gui = Instance.new("ScreenGui")
-gui.Name = "AutoCombatLite"
-gui.ResetOnSpawn = false
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-gui.Parent = game:GetService("CoreGui")
+-- GUI Creation
+local screen = Instance.new("ScreenGui")
+screen.Name = "AutoCombatLite"
+screen.ResetOnSpawn = false
+screen.ZIndexBehavior = Enum.ZIndexBehavior.Global
+screen.Parent = game:GetService("CoreGui")
 
-local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 300, 0, 180)
-frame.Position = UDim2.new(0.05, 0, 0.25, 0)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+local frame = Instance.new("Frame", screen)
+frame.Size = UDim2.new(0, 340, 0, 210)
+frame.Position = UDim2.new(0.06, 0, 0.22, 0)
+frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
 frame.BorderSizePixel = 0
 frame.Active = true
 frame.Draggable = true
+frame.Name = "AutoCombatFrame"
 
 local title = Instance.new("TextLabel", frame)
-title.Size = UDim2.new(1, -20, 0, 28)
+title.Size = UDim2.new(1, -40, 0, 30)
 title.Position = UDim2.new(0, 10, 0, 0)
-title.Text = "⚔️ AutoCombat Lite v3 (Immediate)"
-title.TextColor3 = Color3.new(1,1,1)
-title.TextXAlignment = Enum.TextXAlignment.Left
 title.BackgroundTransparency = 1
+title.Text = "⚔️ AutoCombat Lite v4"
 title.Font = Enum.Font.SourceSansBold
-title.TextSize = 15
+title.TextSize = 16
+title.TextColor3 = Color3.fromRGB(230,230,230)
+title.TextXAlignment = Enum.TextXAlignment.Left
 
-local minimize = Instance.new("TextButton", frame)
-minimize.Size = UDim2.new(0, 26, 0, 26)
-minimize.Position = UDim2.new(1, -32, 0, 2)
-minimize.Text = "-"
-minimize.Font = Enum.Font.SourceSansBold
-minimize.TextSize = 18
-minimize.BackgroundColor3 = Color3.fromRGB(70,70,70)
-minimize.TextColor3 = Color3.new(1,1,1)
+local btnMin = Instance.new("TextButton", frame)
+btnMin.Size = UDim2.new(0, 26, 0, 26)
+btnMin.Position = UDim2.new(1, -34, 0, 2)
+btnMin.Text = "-"
+btnMin.Font = Enum.Font.SourceSansBold
+btnMin.TextSize = 18
+btnMin.BackgroundColor3 = Color3.fromRGB(70,70,70)
+btnMin.TextColor3 = Color3.fromRGB(255,255,255)
 
+-- ON/OFF
 local toggle = Instance.new("TextButton", frame)
-toggle.Size = UDim2.new(0.45, 0, 0, 36)
-toggle.Position = UDim2.new(0.03, 0, 0.22, 0)
+toggle.Size = UDim2.new(0.4, 0, 0, 36)
+toggle.Position = UDim2.new(0.04, 0, 0.18, 0)
 toggle.Text = "OFF"
 toggle.Font = Enum.Font.SourceSansBold
 toggle.TextSize = 16
-toggle.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-toggle.TextColor3 = Color3.new(1,1,1)
+toggle.BackgroundColor3 = Color3.fromRGB(180,50,50)
+toggle.TextColor3 = Color3.fromRGB(255,255,255)
 
+-- Mode (Nearest/MOB/Workspace)
 local modeBtn = Instance.new("TextButton", frame)
-modeBtn.Size = UDim2.new(0.45, 0, 0, 36)
-modeBtn.Position = UDim2.new(0.52, 0, 0.22, 0)
+modeBtn.Size = UDim2.new(0.52, 0, 0, 34)
+modeBtn.Position = UDim2.new(0.52, 0, 0.18, 0)
 modeBtn.Text = "Mode: Nearest"
 modeBtn.Font = Enum.Font.SourceSans
 modeBtn.TextSize = 14
-modeBtn.BackgroundColor3 = Color3.fromRGB(50,120,200)
-modeBtn.TextColor3 = Color3.new(1,1,1)
+modeBtn.BackgroundColor3 = Color3.fromRGB(50,115,190)
+modeBtn.TextColor3 = Color3.fromRGB(255,255,255)
 
-local atkMode = Instance.new("TextButton", frame)
-atkMode.Size = UDim2.new(0.9, 0, 0, 30)
-atkMode.Position = UDim2.new(0.05, 0, 0.5, 0)
-atkMode.Text = "Attack: Both"
-atkMode.Font = Enum.Font.SourceSans
-atkMode.TextSize = 14
-atkMode.BackgroundColor3 = Color3.fromRGB(50,100,150)
-atkMode.TextColor3 = Color3.new(1,1,1)
+-- Attack mode (M1 Only / Skill Only / Both)
+local atkBtn = Instance.new("TextButton", frame)
+atkBtn.Size = UDim2.new(0.9, 0, 0, 34)
+atkBtn.Position = UDim2.new(0.05, 0, 0.42, 0)
+atkBtn.Text = "Attack: Both"
+atkBtn.Font = Enum.Font.SourceSans
+atkBtn.TextSize = 14
+atkBtn.BackgroundColor3 = Color3.fromRGB(60,100,150)
+atkBtn.TextColor3 = Color3.fromRGB(255,255,255)
 
+-- Range input
+local rangeBox = Instance.new("TextBox", frame)
+rangeBox.Size = UDim2.new(0.44, 0, 0, 28)
+rangeBox.Position = UDim2.new(0.05, 0, 0.62, 0)
+rangeBox.PlaceholderText = "Range (stud)"
+rangeBox.Text = tostring(DEFAULT_RANGE)
+rangeBox.ClearTextOnFocus = false
+rangeBox.Font = Enum.Font.SourceSans
+rangeBox.TextSize = 14
+rangeBox.BackgroundColor3 = Color3.fromRGB(45,45,45)
+rangeBox.TextColor3 = Color3.fromRGB(240,240,240)
+
+-- Delay input
 local delayBox = Instance.new("TextBox", frame)
-delayBox.Size = UDim2.new(0.9, 0, 0, 28)
-delayBox.Position = UDim2.new(0.05, 0, 0.68, 0)
-delayBox.PlaceholderText = "Delay (detik) - 0 = no extra delay"
+delayBox.Size = UDim2.new(0.44, 0, 0, 28)
+delayBox.Position = UDim2.new(0.51, 0, 0.62, 0)
+delayBox.PlaceholderText = "Delay (s)"
 delayBox.Text = tostring(DEFAULT_DELAY)
+delayBox.ClearTextOnFocus = false
 delayBox.Font = Enum.Font.SourceSans
 delayBox.TextSize = 14
 delayBox.BackgroundColor3 = Color3.fromRGB(45,45,45)
-delayBox.TextColor3 = Color3.new(1,1,1)
-delayBox.ClearTextOnFocus = false
+delayBox.TextColor3 = Color3.fromRGB(240,240,240)
 
+-- Info label
 local info = Instance.new("TextLabel", frame)
-info.Size = UDim2.new(0.9, 0, 0, 24)
-info.Position = UDim2.new(0.05, 0, 0.86, 0)
+info.Size = UDim2.new(0.9, 0, 0, 26)
+info.Position = UDim2.new(0.05, 0, 0.78, 0)
 info.BackgroundTransparency = 1
 info.Text = "Status: Idle"
-info.TextColor3 = Color3.fromRGB(200,200,200)
 info.Font = Enum.Font.SourceSans
-info.TextSize = 13
+info.TextSize = 14
+info.TextColor3 = Color3.fromRGB(200,200,200)
 
--- === STATE ===
+-- STATE
 local state = {
-	enabled = false,
-	mode = "Nearest",
-	attackMode = "Both",
-	delay = DEFAULT_DELAY,
-	minimized = false
+    enabled = false,
+    mode = "Nearest", -- "Nearest", "MOB", "Workspace"
+    attackMode = "Both", -- "Both", "M1 Only", "Skill Only"
+    delay = DEFAULT_DELAY,
+    range = DEFAULT_RANGE,
+    minimized = false
 }
 
--- === INTERACTIONS ===
+-- Interactions
 toggle.MouseButton1Click:Connect(function()
-	state.enabled = not state.enabled
-	if state.enabled then
-		toggle.Text = "ON"
-		toggle.BackgroundColor3 = Color3.fromRGB(50,200,70)
-	else
-		toggle.Text = "OFF"
-		toggle.BackgroundColor3 = Color3.fromRGB(180,50,50)
-	end
+    state.enabled = not state.enabled
+    if state.enabled then
+        toggle.Text = "ON"
+        toggle.BackgroundColor3 = Color3.fromRGB(50,200,70)
+    else
+        toggle.Text = "OFF"
+        toggle.BackgroundColor3 = Color3.fromRGB(180,50,50)
+    end
 end)
 
 modeBtn.MouseButton1Click:Connect(function()
-	if state.mode == "Nearest" then
-		state.mode = "All"
-		modeBtn.Text = "Mode: All"
-	else
-		state.mode = "Nearest"
-		modeBtn.Text = "Mode: Nearest"
-	end
+    if state.mode == "Nearest" then
+        state.mode = "MOB"; modeBtn.Text = "Mode: MOB"
+    elseif state.mode == "MOB" then
+        state.mode = "Workspace"; modeBtn.Text = "Mode: Workspace"
+    else
+        state.mode = "Nearest"; modeBtn.Text = "Mode: Nearest"
+    end
 end)
 
-atkMode.MouseButton1Click:Connect(function()
-	local nextMode = {["Both"]="M1 Only", ["M1 Only"]="Skill Only", ["Skill Only"]="Both"}
-	state.attackMode = nextMode[state.attackMode]
-	atkMode.Text = "Attack: " .. state.attackMode
+atkBtn.MouseButton1Click:Connect(function()
+    local next = { ["Both"] = "M1 Only", ["M1 Only"] = "Skill Only", ["Skill Only"] = "Both" }
+    state.attackMode = next[state.attackMode]
+    atkBtn.Text = "Attack: " .. state.attackMode
 end)
 
 delayBox.FocusLost:Connect(function(enter)
-	if enter then
-		local v = tonumber(delayBox.Text)
-		if v and v >= 0 then state.delay = v else delayBox.Text = tostring(state.delay) end
-	end
+    if enter then
+        local v = tonumber(delayBox.Text)
+        if v and v >= 0 then state.delay = v else delayBox.Text = tostring(state.delay) end
+    end
 end)
 
-minimize.MouseButton1Click:Connect(function()
-	state.minimized = not state.minimized
-	if state.minimized then
-		for _, c in ipairs(frame:GetChildren()) do
-			if c ~= title and c ~= minimize then c.Visible = false end
-		end
-		frame.Size = UDim2.new(0, 200, 0, 28)
-		title.Text = "⚔️ AutoCombat [Hidden]"
-	else
-		for _, c in ipairs(frame:GetChildren()) do c.Visible = true end
-		frame.Size = UDim2.new(0, 300, 0, 180)
-		title.Text = "⚔️ AutoCombat Lite v3 (Immediate)"
-	end
+rangeBox.FocusLost:Connect(function(enter)
+    if enter then
+        local v = tonumber(rangeBox.Text)
+        if v and v >= 0 then state.range = v else rangeBox.Text = tostring(state.range) end
+    end
 end)
 
--- === MAIN LOOP (IMMEDIATE BEHAVIOR) ===
+btnMin.MouseButton1Click:Connect(function()
+    state.minimized = not state.minimized
+    if state.minimized then
+        for _, c in ipairs(frame:GetChildren()) do
+            if c ~= title and c ~= btnMin then
+                c.Visible = false
+            end
+        end
+        frame.Size = UDim2.new(0, 200, 0, 30)
+        title.Text = "⚔️ AutoCombatLite [Hidden]"
+    else
+        for _, c in ipairs(frame:GetChildren()) do c.Visible = true end
+        frame.Size = UDim2.new(0, 340, 0, 210)
+        title.Text = "⚔️ AutoCombat Lite v4"
+    end
+end)
+
+-- MAIN LOOP
 task.spawn(function()
-	while true do
-		-- tiny yield so we don't freeze host environment; core behavior is "no internal waits"
-		task.wait(0.01)
-		if not state.enabled then
-			info.Text = "Status: Idle"
-			continue
-		end
-		info.Text = "Status: Attacking..."
+    while true do
+        task.wait(0.01) -- tiny yield
+        if not state.enabled then
+            info.Text = "Status: Idle"
+            continue
+        end
 
-		local targets = getTargets()
-		if #targets == 0 then
-			task.wait(0.1)
-			continue
-		end
+        info.Text = string.format("Status: Attacking | Mode:%s | Attack:%s", state.mode, state.attackMode)
 
-		if state.mode == "Nearest" then
-			local t = nearestTarget()
-			if t then
-				-- Immediate behavior: call M1 and skills back-to-back with NO internal waits
-				if state.attackMode == "M1 Only" then
-					doM1(t)
-				elseif state.attackMode == "Skill Only" then
-					doSkillsImmediate(t)
-				else -- Both
-					doM1(t)
-					-- no wait between M1 and skills (user requested immediate)
-					doSkillsImmediate(t)
-				end
-				-- user-configurable global delay (can be zero)
-				if state.delay and state.delay > 0 then
-					task.wait(state.delay)
-				end
-			end
-		else -- All mode: iterate all targets quickly
-			for _, t in ipairs(targets) do
-				if not state.enabled then break end
-				if state.attackMode == "M1 Only" then
-					doM1(t)
-				elseif state.attackMode == "Skill Only" then
-					doSkillsImmediate(t)
-				else
-					doM1(t)
-					doSkillsImmediate(t)
-				end
-				if state.delay and state.delay > 0 then
-					task.wait(state.delay)
-				end
-			end
-		end
-	end
+        local targets = getTargetsByMode(state.mode, state.range)
+        if #targets == 0 then
+            task.wait(0.12)
+            continue
+        end
+
+        if state.mode == "Nearest" then
+            local t = pickNearest(targets)
+            if not t then task.wait(0.08); continue end
+
+            if state.attackMode == "M1 Only" then
+                doM1(t)
+            elseif state.attackMode == "Skill Only" then
+                doSkillsSequence(t)
+            else -- Both
+                doM1(t)
+                task.wait(M1_TO_SKILL_WAIT)
+                doSkillsSequence(t)
+            end
+            if state.delay and state.delay > 0 then task.wait(state.delay) end
+
+        else -- MOB or Workspace: iterate all targets
+            for _, t in ipairs(targets) do
+                if not state.enabled then break end
+                if state.attackMode == "M1 Only" then
+                    doM1(t)
+                elseif state.attackMode == "Skill Only" then
+                    doSkillsSequence(t)
+                else
+                    doM1(t)
+                    task.wait(M1_TO_SKILL_WAIT)
+                    doSkillsSequence(t)
+                end
+                if state.delay and state.delay > 0 then task.wait(state.delay) end
+            end
+        end
+    end
 end)
 
-print("[AutoCombatLite] Immediate Edition loaded.")
+print("[AutoCombatLite v4] Loaded. Default Range:", DEFAULT_RANGE, "Default Delay:", DEFAULT_DELAY)
