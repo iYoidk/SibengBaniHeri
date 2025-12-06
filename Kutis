@@ -1,66 +1,287 @@
--- AutoCombat Lite v4 - Workspace Range Edition
--- Features:
---   - Mode: Nearest / MOB / Workspace
---   - Attack: M1 Only / Skill Only / Both (Both => M1 then skill)
---   - Range: custom (default 500) for Workspace mode
---   - Delay: custom (0 = no extra delay)
---   - OpX: Up -> wait(0.08) -> Down
---   - Safe invokes with pcall
---   - GUI window style + minimize
--- Name: AutoCombatLite
+-- Infinite Craft Merge Module
+-- Fixed version
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local player = Players.LocalPlayer
+local module = {}
 
--- Config (default)
-local SKILL_SEQ = {
-    M1  = "SW_Kioru V2_M1",
-    Z   = "SW_Kioru V2_Z",
-    OpX = "DF_OpOp_X"
-}
-local DEFAULT_DELAY = 0.05
-local DEFAULT_RANGE = 500
-local OPX_UP_TO_DOWN_WAIT = 0.08
-local M1_TO_SKILL_WAIT = 0.05
+-- Recipe tables (simplified for readability)
+local NORMAL_RECIPES = {}
+local SPECIAL_RECIPES = {}
 
--- Find SkillAction remote safely
-local SkillAction
-pcall(function()
-    local chest = ReplicatedStorage:FindFirstChild("Chest")
-    if not chest then chest = ReplicatedStorage:WaitForChild("Chest", 5) end
-    if chest then
-        local remotes = chest:FindFirstChild("Remotes")
-        local funcs = remotes and remotes:FindFirstChild("Functions")
-        SkillAction = funcs and funcs:FindFirstChild("SkillAction")
+-- Convert the original tables
+for _, recipe in ipairs({
+    {{"water", "water"}, {"ocean"}}, {{"tree", "fire"}, {"dust"}}, {{"wind", "earth"}, {"dust"}},
+    {{"fire", "wind"}, {"energy"}}, {{"energy", "plant"}, {"nature"}}, {{"energy", "tree"}, {"nature"}},
+    {{"water", "fire"}, {"yin yang"}}, {{"yin yang", "ocean"}, {"monk"}}, {{"yin yang", "fire"}, {"ninja"}},
+    {{"water", "volcano"}, {"geyser"}}, {{"yin yang", "water"}, {"monk"}}, {{"earth", "energy"}, {"earthquake"}},
+    {{"energy", "rainbow"}, {"hypnotic"}}, {{"life", "rainbow"}, {"hypnotic"}}, {{"water", "earth"}, {"plant"}},
+    {{"plant", "plant"}, {"tree"}}, {{"monk", "air"}, {"calm"}}, {{"demon", "energy"}, {"rage"}},
+    {{"water", "coal"}, {"gold"}}, {{"wind", "water"}, {"energy"}}, {{"water", "death"}, {"toxic"}},
+    {{"fire", "death"}, {"toxic"}}, {{"ninja", "wind"}, {"speed"}}, {{"plant", "fire"}, {"dust"}},
+    {{"infinite", "space"}, {"galaxy"}}, {{"space", "space"}, {"galaxy"}}, {{"yin yang", "time"}, {"rng"}},
+    {{"dust", "energy"}, {"spirit"}}, {{"dust", "fire"}, {"spirit"}}, {{"monk", "fire"}, {"ninja"}},
+    {{"ninja", "rage"}, {"ko"}}, {{"energy", "fire"}, {"eternal flame"}}, {{"monk", "energy"}, {"buddha"}},
+    {{"rainbow", "buddha"}, {"muse"}}, {{"earth", "spirit"}, {"earthquake"}}, {{"rain", "storm"}, {"tsunami"}},
+    {{"water", "storm"}, {"tsunami"}}, {{"ocean", "earthquake"}, {"tsunami"}}, {{"life", "tsunami"}, {"trident"}},
+    {{"spirit", "dust"}, {"life"}}, {{"water", "plant"}, {"life"}}, {{"fire", "earth"}, {"lava"}},
+    {{"lava", "water"}, {"stone"}}, {{"water", "dust"}, {"energy"}}, {{"energy", "life"}, {"power"}},
+    {{"fire", "vip"}, {"crimson king"}}, {{"energy", "vip"}, {"royal power"}}, {{"life", "vip"}, {"royal power"}},
+    {{"stone", "dust"}, {"sand"}}, {{"energy", "sand"}, {"sandstorm"}}, {{"water", "spirit"}, {"storm"}},
+    {{"lava", "earth"}, {"volcano"}}, {{"lava", "lava"}, {"magma"}}, {{"earth", "eruption"}, {"crust"}},
+    {{"energy", "magma"}, {"eruption"}}, {{"energy", "lava"}, {"eruption"}}, {{"geyser", "lava"}, {"eruption"}},
+    {{"geyser", "magma"}, {"eruption"}}, {{"water", "tornado"}, {"spout"}}, {{"spirit", "wind"}, {"tornado"}},
+    {{"water", "tree"}, {"swamp"}}, {{"gravity", "star"}, {"supernova"}}, {{"nuclear", "supernova"}, {"fission"}},
+    {{"sand", "sand"}, {"desert"}}, {{"storm", "storm"}, {"hurricane"}}, {{"water", "time"}, {"ice"}},
+    {{"ice", "spirit"}, {"snow"}}, {{"storm", "snow"}, {"blizzard"}}, {{"fire", "fire"}, {"wildfire"}},
+    {{"energy", "infinite"}, {"eternal"}}, {{"desert", "time"}, {"drought"}}, {{"desert", "infinite"}, {"drought"}},
+    {{"desert", "eternal"}, {"drought"}}, {{"desert", "death"}, {"drought"}}, {{"spirit", "storm"}, {"rainbow"}},
+    {{"wind", "wind"}, {"air"}}, {{"air", "air"}, {"cloud"}}, {{"air", "cloud"}, {"sky"}},
+    {{"wind", "cloud"}, {"sky"}}, {{"wind", "air"}, {"sky"}}, {{"sky", "sky"}, {"space"}},
+    {{"stone", "space"}, {"meteor"}}, {{"space", "spirit"}, {"aurora borealis"}}, {{"time", "plant"}, {"life"}},
+    {{"time", "tree"}, {"life"}}, {{"life", "water"}, {"aquatic"}}, {{"nature", "life"}, {"butterfly"}},
+    {{"ninja", "fire"}, {"demon"}}, {{"space", "time"}, {"dark matter"}}, {{"darkness", "deception"}, {"hidden"}},
+    {{"time", "time"}, {"infinite"}}, {{"time", "life"}, {"death"}}, {{"infinite", "vortex"}, {"infinite vortex"}},
+    {{"rng", "infinite"}, {"rhythm"}}, {{"rng", "life"}, {"luck"}}, {{"life", "life"}, {"zenith"}},
+    {{"earth", "space"}, {"star"}}, {{"infinite", "star"}, {"starlight"}}, {{"starlight", "earth"}, {"shimmer"}},
+    {{"blizzard", "life"}, {"frostbite"}}, {{"life", "god"}, {"royalty"}}, {{"trident", "god"}, {"poseidon"}},
+    {{"energy", "energy"}, {"plasma"}}, {{"synthwave", "plasma"}, {"fermotic"}}, {{"life", "fire"}, {"phoenix"}},
+    {{"life", "space"}, {"science"}}, {{"energy", "science"}, {"technology"}}, {{"zenith", "technology"}, {"ai"}},
+    {{"fire", "stone"}, {"metal"}}, {{"rhythm", "technology"}, {"synthwave"}}, {{"synthwave", "speed"}, {"techtronic"}},
+    {{"death", "life"}, {"raven"}}, {{"god", "death"}, {"devil"}}, {{"starlight", "zenith"}, {"beacon"}},
+    {{"space", "science"}, {"rocket"}}, {{"vortex", "space"}, {"black hole"}}, {{"earth", "star"}, {"planet"}},
+    {{"wind", "star"}, {"solar wind"}}, {{"sky", "time"}, {"night"}}, {{"sky", "night"}, {"twilight"}},
+    {{"meteor", "meteor"}, {"meteor shower"}}, {{"night", "stone"}, {"moon"}}, {{"time", "galaxy"}, {"vortex"}},
+    {{"infinite", "galaxy"}, {"vortex"}}, {{"energy", "galaxy"}, {"vortex"}}, {{"earth", "galaxy"}, {"vortex"}},
+    {{"water", "zenith"}, {"waterfall"}}, {{"starlight", "life"}, {"waterfall"}}, {{"water", "power"}, {"waterfall"}},
+    {{"cloud", "life"}, {"god"}}, {{"sky", "god"}, {"heaven"}}, {{"sky", "life"}, {"god"}},
+    {{"energy", "god"}, {"zeus"}}, {{"star", "god"}, {"apollo"}}, {{"knight", "god"}, {"ares"}},
+    {{"earth", "earth"}, {"stone"}}, {{"spirit", "spirit"}, {"magic"}}, {{"ninja", "plant"}, {"blossom"}},
+    {{"life", "blossom"}, {"spring"}}, {{"earth", "blossom"}, {"spring"}}, {{"infinite", "blossom"}, {"spring"}},
+    {{"aquatic", "rhythm"}, {"crab"}}, {{"stone", "stone"}, {"coal"}}, {{"coal", "coal"}, {"gem"}},
+    {{"gem", "time"}, {"perfection"}}, {{"monk", "rainbow"}, {"third eye"}}, {{"tree", "tree"}, {"air"}},
+    {{"perfection", "third eye"}, {"prism"}}, {{"earth", "gem"}, {"vibrance"}}, {{"stone", "gem"}, {"treasure"}},
+    {{"star", "magic"}, {"starlight"}}, {{"fire", "magic"}, {"ring of fire"}}, {{"sky", "portal"}, {"rift"}},
+    {{"air", "portal"}, {"rift"}}, {{"wind", "portal"}, {"rift"}}, {{"energy", "magic"}, {"fairy"}},
+    {{"star", "aurora borealis"}, {"north star"}}, {{"bat", "superhero"}, {"batman"}}, {{"bat", "life"}, {"vampire"}},
+    {{"sinister", "batman"}, {"joker"}}, {{"cosmic", "brilliant"}, {"flex"}}, {{"cosmic", "jackpot"}, {"flex"}},
+    {{"brilliant", "jackpot"}, {"flex"}}, {{"hidden", "jackpot"}, {"null"}}, {{"energy", "sky"}, {"sunshine"}},
+    {{"sad", "troll"}, {"noob"}}, {{"divine", "noob"}, {"giga"}}, {{"death", "rage"}, {"hellbent"}},
+    {{"noob", "big bang"}, {"mlg"}}, {{"infinite", "god"}, {"vision"}}, {{"plant", "nature"}, {"rose"}},
+    {{"energy", "space"}, {"gravity"}}, {{"gravity", "space"}, {"nebula"}}, {{"gravity", "energy"}, {"nebula"}},
+    {{"gravity", "life"}, {"nebula"}}, {{"toxic", "toxic"}, {"sinister"}}, {{"toxic", "death"}, {"sinister"}},
+    {{"toxic", "life"}, {"sinister"}}, {{"toxic", "time"}, {"sinister"}}, {{"awesome", "rain"}, {"tacos"}},
+    {{"nebula", "vision"}, {"relativity"}}, {{"space", "vision"}, {"relativity"}}, {{"gravity", "vision"}, {"relativity"}},
+    {{"pure", "rose"}, {"love"}}, {{"harmony", "rose"}, {"love"}}, {{"perfection", "rose"}, {"love"}},
+    {{"radiance", "rose"}, {"love"}}, {{"rainbow", "rose"}, {"love"}}, {{"love", "rhythm"}, {"pulse"}},
+    {{"death", "rhythm"}, {"phonk"}}, {{"sky", "rainbow"}, {"harmony"}}, {{"cloud", "rainbow"}, {"harmony"}},
+    {{"harmony", "harmony"}, {"serenity"}}, {{"tranquility", "serenity"}, {"equinox"}}, {{"gold", "harmony"}, {"superb"}},
+    {{"cycle", "equinox"}, {"contrast"}}, {{"perfection", "monk"}, {"balance"}}, {{"time", "monk"}, {"sleep"}},
+    {{"time", "sleep"}, {"dream"}}, {{"sleep", "calm"}, {"tranquility"}}, {{"power", "life"}, {"unity"}},
+    {{"raven", "harmony"}, {"peace"}}, {{"life", "rose"}, {"daisy"}}, {{"power", "power"}, {"courage"}},
+    {{"courage", "energy"}, {"radiance"}}, {{"energy", "radiance"}, {"euphoria"}}, {{"time", "power"}, {"inspiration"}},
+    {{"infinite", "monk"}, {"abundance"}}, {{"devil", "life"}, {"reaper"}}, {{"power", "death"}, {"chaos"}},
+    {{"abundance", "death"}, {"chaos"}}, {{"unity", "death"}, {"chaos"}}, {{"chaos", "chaos"}, {"doom"}},
+    {{"chaos", "reaper"}, {"doom"}}, {{"life", "reaper"}, {"vengeance"}}, {{"time", "black hole"}, {"void"}},
+    {{"past", "future"}, {"karma"}}, {{"infinite vortex", "quasar"}, {"singularity"}}, {{"death", "peace"}, {"phantom"}},
+    {{"time", "magic"}, {"mystic"}}, {{"doom", "power"}, {"sinister"}}, {{"doom", "life"}, {"sinister"}},
+    {{"courage", "time"}, {"ominous"}}, {{"doom", "doom"}, {"apocalypse"}}, {{"energy", "phantom"}, {"specter"}},
+    {{"life", "phantom"}, {"specter"}}, {{"void", "death"}, {"darkness"}}, {{"darkness", "darkness"}, {"cursed"}},
+    {{"phantom", "phantom"}, {"haunted"}}, {{"god", "time"}, {"angel"}}, {{"power", "angel"}, {"divine"}},
+    {{"phantom", "darkness"}, {"dark angel"}}, {{"earth", "haunted"}, {"graveyard"}}, {{"reaper", "reaper"}, {"macabre"}},
+    {{"vision", "hypnotic"}, {"cryptic"}}, {{"time", "sinister"}, {"wicked"}}, {{"death", "energy"}, {"necromancer"}},
+    {{"magic", "magic"}, {"sorcerer"}}, {{"sorcerer", "rage"}, {"itadori"}}, {{"magic", "water"}, {"bubbles"}},
+    {{"magic", "life"}, {"fairy"}}, {{"mystery", "nightmare"}, {"fear"}}, {{"darkness", "nightmare"}, {"fear"}},
+    {{"magic", "wind"}, {"shimmer"}}, {{"ice", "earth"}, {"glacier"}}, {{"magic", "portal"}, {"ender"}},
+    {{"magic", "vortex"}, {"portal"}}, {{"moon", "rocket"}, {"alien"}}, {{"air", "calm"}, {"breeze"}},
+    {{"alien", "rocket"}, {"ufo"}}, {{"lightning", "metal"}, {"tesla"}}, {{"infinite", "infinite"}, {"mystery"}},
+    {{"energy", "mystery"}, {"wonder"}}, {{"life", "mystery"}, {"wonder"}}, {{"technology", "cursed"}, {"troll"}},
+    {{"ai", "life"}, {"death"}}, {{"darkness", "starlight"}, {"shadow"}}, {{"future", "starlight"}, {"zodiac"}},
+    {{"sky", "star"}, {"constellation"}}, {{"constellation", "omniscient"}, {"zodiac"}}, {{"future", "hax"}, {"matrix"}},
+    {{"death", "ice"}, {"cryogen"}}, {{"time", "ice"}, {"cryogen"}}, {{"energy", "storm"}, {"lightning"}},
+    {{"sunshine", "moon"}, {"eclipse"}}, {{"star", "life"}, {"firefly"}}, {{"calm", "pure"}, {"zen"}},
+    {{"calm", "ninja"}, {"zen"}}, {{"rhythm", "zen"}, {"harp"}}, {{"royalty", "ninja"}, {"knight"}},
+    {{"royalty", "life"}, {"knight"}}, {{"royal power", "life"}, {"knight"}}, {{"lightning", "lightning"}, {"plasma"}},
+    {{"life", "toxic"}, {"plague"}}, {{"infinite", "toxic"}, {"radioactive"}}, {{"energy", "toxic"}, {"radioactive"}},
+    {{"plasma", "radioactive"}, {"explosive"}}, {{"explosive", "radioactive"}, {"nuclear"}}, {{"life", "vengeance"}, {"apex"}},
+    {{"space", "pure"}, {"quasar"}}, {{"galaxy", "pure"}, {"quasar"}}, {{"death", "super"}, {"supervillain"}},
+    {{"devil", "super"}, {"supervillain"}}, {{"life", "super"}, {"superhero"}}, {{"superhero", "space"}, {"jedi"}},
+    {{"jedi", "zen"}, {"yoda"}}, {{"jedi", "joy"}, {"yoda"}}, {{"jedi", "supervillain"}, {"darth"}},
+    {{"supreme", "darth"}, {"sith"}}, {{"hyper", "joy"}, {"awesome"}}, {{"sad", "cycle"}, {"joy"}},
+    {{"cycle", "space"}, {"eclipse"}}, {{"sad", "gem"}, {"amber"}}, {{"death", "gem"}, {"amber"}},
+    {{"gem", "luck"}, {"emerald"}}, {{"gem", "love"}, {"ruby"}}, {{"metal", "power"}, {"platinum"}},
+    {{"stone", "gravity"}, {"magnetic"}}, {{"rage", "vengeance"}, {"revenge"}}, {{"time", "mystery"}, {"deception"}},
+    {{"wonder", "mystery"}, {"deception"}}, {{"infinite", "time"}, {"future"}}, {{"wonder", "future"}, {"past"}},
+    {{"life", "explosive"}, {"adrenaline"}}, {{"space", "explosive"}, {"big bang"}}, {{"rainbow", "shimmer"}, {"glitter"}},
+    {{"stone", "rainbow"}, {"quartz"}}, {{"adrenaline", "speed"}, {"hyper"}}, {{"geometry", "desert"}, {"sphinx"}},
+    {{"joy", "life"}, {"freedom"}}, {{"life", "cycle"}, {"death"}}, {{"death", "cycle"}, {"werewolf"}},
+    {{"speed", "rhythm"}, {"hip hop"}}, {{"god", "future"}, {"omniscient"}}, {{"future", "rhythm"}, {"phonk"}},
+    {{"power", "rhythm"}, {"dubstep"}}, {{"hip hop", "adrenaline"}, {"party"}}, {{"phonk", "adrenaline"}, {"party"}},
+    {{"energy", "party"}, {"disco"}}, {{"unity", "balance"}, {"geometry"}}, {{"geometry", "science"}, {"chemistry"}},
+    {{"love", "death"}, {"heartbreak"}}, {{"lightning", "god"}, {"zeus"}}, {{"nightmare", "god"}, {"medusa"}},
+    {{"rainbow", "spring"}, {"floral"}}, {{"darkness", "power"}, {"boss"}}, {{"darkness", "eternal"}, {"blackout"}},
+    {{"gold", "boss"}, {"wealth"}}, {{"cycle", "wealth"}, {"brokie"}}, {{"infinite", "boss"}, {"supreme"}},
+    {{"adrenaline", "boss"}, {"supreme"}}, {{"energy", "boss"}, {"supreme"}}, {{"vip", "boss"}, {"supreme"}},
+    {{"power", "boss"}, {"supreme"}}, {{"death", "spirit"}, {"wraith"}}, {{"death", "freedom"}, {"chained"}},
+    {{"sinister", "aquatic"}, {"pirate"}}, {{"toxic", "pirate"}, {"dutchman"}}, {{"past", "pirate"}, {"dutchman"}},
+    {{"sinister", "pirate"}, {"dutchman"}}, {{"sleep", "death"}, {"nightmare"}}, {{"aquatic", "life"}, {"mermaid"}},
+    {{"sand", "ocean"}, {"tropical"}}, {{"ocean", "tropical"}, {"mermaid"}}, {{"metal", "life"}, {"robot"}},
+    {{"supreme", "supreme"}, {"luxury"}}, {{"knight", "vip"}, {"crown"}}, {{"cloud", "water"}, {"rain"}},
+    {{"sad", "cloud"}, {"rain"}}, {{"infinite", "crown"}, {"emperor"}}, {{"power", "phoenix"}, {"dragon"}},
+    {{"power", "energy"}, {"super"}}, {{"fire", "sand"}, {"glass"}}, {{"gem", "glass"}, {"diamond"}},
+    {{"shadow", "glass"}, {"reflect"}}, {{"ocean", "diamond"}, {"sapphire"}}, {{"devil", "time"}, {"chronus"}},
+    {{"speed", "assassin"}, {"samurai"}}, {{"jedi", "energy"}, {"force"}}, {{"superhero", "speed"}, {"flash"}},
+    {{"supervillain", "supreme"}, {"corrupt"}}, {{"aquatic", "tropical"}, {"shark"}}, {{"future", "vision"}, {"prophet"}},
+    {{"deception", "hidden"}, {"spy"}}, {{"technology", "galaxy"}, {"metaverse"}}, {{"sphinx", "past"}, {"ancient"}},
+    {{"ancient", "future"}, {"ruins"}}, {{"buddha", "death"}, {"nirvana"}}, {{"sad", "metaverse"}, {"depressed"}},
+    {{"life", "depressed"}, {"alone"}}, {{"werewolf", "alone"}, {"alpha"}}, {{"depressed", "time"}, {"heal"}},
+    {{"mystery", "death"}, {"supernatural"}}, {{"alone", "supernatural"}, {"terror"}}, {{"god", "corrupt"}, {"hades"}},
+    {{"hades", "galaxy"}, {"annihilation"}}, {{"hax", "metaverse"}, {"glitch"}}, {{"supreme", "luck"}, {"genius"}},
+    {{"love", "shimmer"}, {"cute"}}, {{"black hole", "black hole"}, {"hypernova"}}, {{"infinite", "metaverse"}, {"insane"}},
+    {{"glitter", "cute"}, {"kawaii"}}, {{"hypernova", "hypernova"}, {"undefined"}}, {{"mystery", "reflect"}, {"mirage"}},
+    {{"undefined", "supreme"}, {"omega"}}, {{"frostbite", "supreme"}, {"drip"}}, {{"omega", "noob"}, {"big head"}},
+    {{"lightning", "explosive"}, {"shockwave"}}, {{"eclipse", "nirvana"}, {"solstice"}}, {{"nirvana", "wind"}, {"zephyr"}},
+    {{"mirage", "ocean"}, {"horizon"}}, {{"hidden", "nature"}, {"camo"}}
+}) do
+    table.insert(NORMAL_RECIPES, recipe)
+end
+
+for _, recipe in ipairs({
+    {{"ninja", "hidden"}, {"assassin"}, 50}, {{"ninja", "darkness"}, {"assassin"}, 50},
+    {{"infinite", "space"}, {"multiverse"}, 25}, {{"death", "star"}, {"starfall"}, 20},
+    {{"starfall", "joy"}, {"wish"}, 25}, {{"wish", "luck"}, {"surprise"}, 25},
+    {{"past", "black hole"}, {"paradox"}, 5}, {{"pure", "love"}, {"crimson"}, 10},
+    {{"rng", "infinite"}, {"ace"}, 20}, {{"rng", "fire"}, {"ace"}, 20},
+    {{"rng", "luck"}, {"ace"}, 20}, {{"rng", "joker"}, {"ace"}, 20},
+    {{"vision", "god"}, {"overseer"}, 33}, {{"god", "darkness"}, {"underworld"}, 66},
+    {{"fire", "fire"}, {"bonfire"}, 50}, {{"fire", "tree"}, {"bonfire"}, 50},
+    {{"fire", "air"}, {"bonfire"}, 50}, {{"infinite", "sorcerer"}, {"gojo"}, 20},
+    {{"water", "fire"}, {"maelstrom"}, 25}, {{"supernatural", "shark"}, {"kraken"}, 25},
+    {{"power", "energy"}, {"saiyan"}, 10}, {{"water", "water"}, {"tidal"}, 50},
+    {{"doom", "rage"}, {"berserker"}, 5}, {{"royalty", "sphinx"}, {"pharaoh"}, 40},
+    {{"ocean", "rock"}, {"coral"}, 50}, {{"death", "death"}, {"immortal"}, 25},
+    {{"death", "power"}, {"immortal"}, 25}, {{"death", "wish"}, {"immortal"}, 25}
+}) do
+    table.insert(SPECIAL_RECIPES, recipe)
+end
+
+-- Services
+local TweenService = game:GetService("TweenService")
+local TweenInfo_Default = TweenInfo.new(0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, 0, false, 0)
+
+-- Cache for modules
+local Texture_GUI, AddToPlr
+local function getTextureGUI()
+    if not Texture_GUI then
+        Texture_GUI = require(game.ReplicatedStorage:WaitForChild("Texture_GUI"))
     end
-end)
-
-if not SkillAction then
-    warn("[AutoCombatLite] SkillAction remote tidak ditemukan di ReplicatedStorage.Chest.Remotes.Functions.SkillAction")
-    return
+    return Texture_GUI
 end
 
--- Ensure MOB folder exists (MOB mode)
-local MOB = Workspace:FindFirstChild("MOB")
+local function getAddToPlr()
+    if not AddToPlr then
+        AddToPlr = require(game.ReplicatedStorage:WaitForChild("AddToPlr"))
+    end
+    return AddToPlr
+end
 
--- Utility safe invoke
-local function safeInvoke(skillName, payload)
-    pcall(function()
-        if not SkillAction then return end
-        if SkillAction.InvokeServer then
-            SkillAction:InvokeServer(skillName, payload)
-        elseif SkillAction.FireServer then
-            SkillAction:FireServer(skillName, payload)
+-- Helper function to normalize element names
+local function normalizeName(name)
+    return string.lower(tostring(name):gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1"))
+end
+
+-- Main merge function
+function module.MergeTwoFuseables(name1, name2)
+    local n1 = normalizeName(name1)
+    local n2 = normalizeName(name2)
+    
+    -- Check special recipes first (with chance)
+    for _, recipe in ipairs(SPECIAL_RECIPES) do
+        local ingredients = recipe[1]
+        local ingredient1 = normalizeName(ingredients[1])
+        local ingredient2 = normalizeName(ingredients[2])
+        local result = recipe[2][1]
+        local chance = recipe[3] or 100
+        
+        if (ingredient1 == n1 and ingredient2 == n2) or (ingredient1 == n2 and ingredient2 == n1) then
+            if math.random(1, 100) <= chance then
+                return result, true
+            end
         end
-    end)
+    end
+    
+    -- Check normal recipes
+    for _, recipe in ipairs(NORMAL_RECIPES) do
+        local ingredients = recipe[1]
+        local ingredient1 = normalizeName(ingredients[1])
+        local ingredient2 = normalizeName(ingredients[2])
+        local result = recipe[2][1]
+        
+        if (ingredient1 == n1 and ingredient2 == n2) or (ingredient1 == n2 and ingredient2 == n1) then
+            return result, false
+        end
+    end
+    
+    return nil, false
 end
 
--- Target gathering helpers
-local function isAttackableModel(m)
-    if not m or not m.Parent then return false end
-    local hrp = m:FindFirstChild("HumanoidRootPart")
+-- Create visual element for merge result
+function module.Make(element1, element2, recipeData, resultName, isSpecial)
+    if not element1 or not element2 then return nil end
+    
+    local clone = element1:Clone()
+    clone.Parent = element1.Parent
+    
+    -- Apply texture/color
+    local textureGUI = getTextureGUI()
+    if textureGUI and textureGUI.TextureGUI then
+        textureGUI.TextureGUI(clone, recipeData)
+    end
+    
+    -- Position at midpoint
+    local x1 = element1.Position.X.Offset or 0
+    local y1 = element1.Position.Y.Offset or 0
+    local x2 = element2.Position.X.Offset or 0
+    local y2 = element2.Position.Y.Offset or 0
+    
+    clone.Position = UDim2.new(0, (x1 + x2) / 2, 0, (y1 + y2) / 2)
+    
+    -- Animate scale
+    if clone:FindFirstChild("UIScale") then
+        clone.UIScale.Scale = 0
+        TweenService:Create(clone.UIScale, TweenInfo_Default, { Scale = 1 }):Play()
+    end
+    
+    -- Clean up originals
+    element1:Destroy()
+    element2:Destroy()
+    
+    return clone
+end
+
+-- Give result to player
+function module.GiveResult(element1Name, element2Name, guiElement1, guiElement2, player)
+    local resultName, isSpecial = module.MergeTwoFuseables(element1Name, element2Name)
+    
+    if resultName and guiElement1 and guiElement2 then
+        local newElement = module.Make(guiElement1, guiElement2, {resultName}, resultName, isSpecial)
+        
+        local addToPlr = getAddToPlr()
+        if addToPlr and addToPlr.AddToPlr then
+            addToPlr.AddToPlr(resultName, player, newElement, true)
+        end
+        return true
+    else
+        -- Failed merge animation
+        if guiElement1 and guiElement2 then
+            TweenService:Create(guiElement1, TweenInfo_Default, {
+                Position = guiElement1.Position + UDim2.new(math.random(-7, 7) * 0.01, 0, math.random(-7, 7) * 0.01, 0)
+            }):Play()
+            
+            TweenService:Create(guiElement2, TweenInfo_Default, {
+                Position = guiElement2.Position + UDim2.new(math.random(-7, 7) * 0.01, 0, math.random(-7, 7) * 0.01, 0)
+            }):Play()
+            
+            -- Play error sound
+               local hrp = m:FindFirstChild("HumanoidRootPart")
     local hum = m:FindFirstChildOfClass("Humanoid")
     return hrp and hum and hum.Health and hum.Health > 0
 end
